@@ -1,0 +1,441 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#6f2b9f">
+  <meta name="description" content="Create matching 3/4 front and rear character art, then convert it into Visualiser-ready sprites.">
+  <title>Visualiser Character Studio</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="assets/icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/4.3.1/model-viewer.min.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="assets/icon.svg" alt="" width="42" height="42">
+      <div>
+        <h1>Visualiser Character Studio</h1>
+        <p>Character art → directional views → game sprites</p>
+      </div>
+    </div>
+    <button class="ghost-button" id="settingsButton" type="button" aria-controls="settingsPanel" aria-expanded="false">Settings</button>
+  </header>
+
+  <main class="app-shell">
+    <aside class="stepper" aria-label="Workflow">
+      <button class="step active" type="button" data-step="1">
+        <span>1</span>
+        <strong>Reference</strong>
+        <small>Upload image or model</small>
+      </button>
+      <button class="step" type="button" data-step="2" disabled>
+        <span>2</span>
+        <strong>Directional art</strong>
+        <small>Front and rear 3/4</small>
+      </button>
+      <button class="step" type="button" data-step="3" disabled>
+        <span>3</span>
+        <strong>Sprite</strong>
+        <small>Convert and refine</small>
+      </button>
+      <button class="step" type="button" data-step="4" disabled>
+        <span>4</span>
+        <strong>Export</strong>
+        <small>PNG and .smbsprite</small>
+      </button>
+    </aside>
+
+    <section class="workspace">
+      <section class="panel step-panel active" data-panel="1">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Step 1</p>
+            <h2>Add a character reference</h2>
+            <p>Upload an illustration, rendered model view, or GLB model. The description box is used to explain hidden details and the exact pose you want. Advanced controls can now lock cloak, cape, mantle, and draped-garment structure.</p>
+          </div>
+          <span class="status-pill" id="connectionBadge">Checking renderer…</span>
+        </div>
+
+        <div class="input-tabs" role="tablist" aria-label="Reference type">
+          <button class="tab active" id="imageTab" type="button" role="tab" aria-selected="true" aria-controls="imageInputPanel">Image</button>
+          <button class="tab" id="modelTab" type="button" role="tab" aria-selected="false" aria-controls="modelInputPanel">3D model</button>
+        </div>
+
+        <div id="imageInputPanel" class="tab-panel active" role="tabpanel" aria-labelledby="imageTab">
+          <label class="drop-zone" id="imageDropZone" for="imageInput">
+            <input id="imageInput" type="file" accept="image/png,image/jpeg,image/webp">
+            <span class="drop-icon">＋</span>
+            <strong>Drop a character image here</strong>
+            <small>PNG, JPG or WebP — full body references work best</small>
+          </label>
+          <div class="reference-preview hidden" id="imagePreviewWrap">
+            <img id="imagePreview" alt="Uploaded character reference preview">
+            <button class="small-button" id="replaceImageButton" type="button">Replace image</button>
+          </div>
+        </div>
+
+        <div id="modelInputPanel" class="tab-panel" role="tabpanel" aria-labelledby="modelTab" hidden>
+          <label class="drop-zone" id="modelDropZone" for="modelInput">
+            <input id="modelInput" type="file" accept=".glb,.gltf,.dae,.zip,model/gltf-binary,model/gltf+json,application/zip">
+            <span class="drop-icon">3D</span>
+            <strong>Drop a GLB, glTF, DAE or ZIP model here</strong>
+            <small>ZIP is recommended for DAE so textures can be unpacked and converted automatically</small>
+          </label>
+          <div class="model-stage hidden" id="modelStage">
+            <model-viewer id="modelViewer" camera-controls interaction-prompt="none" shadow-intensity="1" environment-image="neutral" alt="Uploaded character model"></model-viewer>
+            <div class="capture-row">
+              <button class="small-button" id="captureFrontButton" type="button">Capture current view as front 3/4</button>
+              <button class="small-button" id="captureBackButton" type="button">Capture current view as rear 3/4</button>
+            </div>
+            <p class="helper-text">GLB and glTF load directly. ZIP uploads are unpacked in the browser; if a DAE is found it is converted to GLB automatically, even when the texture folders are messy. Then rotate the model and capture each reference.</p>
+            <div class="capture-previews">
+              <figure>
+                <figcaption>Front reference</figcaption>
+                <img id="modelFrontCapture" alt="Captured front model reference">
+              </figure>
+              <figure>
+                <figcaption>Rear reference</figcaption>
+                <img id="modelBackCapture" alt="Captured rear model reference">
+              </figure>
+            </div>
+          </div>
+        </div>
+
+        <div class="form-grid">
+          <label>
+            Character name
+            <input id="characterName" type="text" maxlength="80" placeholder="e.g. Quilla">
+          </label>
+          <label>
+            Pose
+            <select id="poseSelect">
+              <option value="walking" selected>Walking</option>
+              <option value="neutral">Neutral standing</option>
+              <option value="battle-ready">Battle-ready</option>
+              <option value="casting">Casting</option>
+              <option value="custom">Custom — explain below</option>
+            </select>
+          </label>
+        </div>
+
+        <label class="description-field">
+          Character and render description
+          <textarea id="descriptionInput" rows="6" maxlength="2400" placeholder="Describe the character, hidden details, pose, clothing construction and anything the renderer must not guess incorrectly. Example: The red cloak wraps all the way around the back. Use a graceful walking pose. The dress hides her feet. Preserve the gold horizontal band across the oval clasp."></textarea>
+          <span><span id="descriptionCount">0</span>/2400</span>
+        </label>
+
+        <details class="advanced-options">
+          <summary>Advanced generation options</summary>
+          <div class="form-grid compact">
+            <label>
+              Art treatment
+              <select id="artTreatment">
+                <option value="match-source" selected>Match the source style</option>
+                <option value="clean-anime">Clean anime illustration</option>
+                <option value="painted-fantasy">Painted fantasy art</option>
+                <option value="cel-shaded">Cel-shaded game art</option>
+              </select>
+            </label>
+            <label>
+              Render quality
+              <select id="qualitySelect">
+                <option value="low">Draft</option>
+                <option value="medium" selected>Standard</option>
+                <option value="high">High</option>
+              </select>
+            </label>
+            <label>
+              Design fidelity
+              <input id="fidelityRange" type="range" min="1" max="3" step="1" value="3">
+              <span class="range-value" id="fidelityValue">Strict</span>
+            </label>
+            <label class="check-label">
+              <input id="lookBackToggle" type="checkbox">
+              Rear view glances back toward camera
+            </label>
+            <label>
+              Outer garment type
+              <select id="outerGarmentType">
+                <option value="auto" selected>Auto / describe manually</option>
+                <option value="cape">Cape</option>
+                <option value="cloak">Cloak</option>
+                <option value="detached-sleeve-drapes">Detached sleeve drapes</option>
+                <option value="shoulder-mantle">Shoulder mantle</option>
+                <option value="split-coattails">Split coat tails</option>
+                <option value="none">No outer garment</option>
+              </select>
+            </label>
+            <label>
+              Back construction
+              <select id="outerGarmentBack">
+                <option value="auto" selected>Auto / infer from description</option>
+                <option value="full-back-panel">Single full back panel</option>
+                <option value="open-centre">Open at the centre back</option>
+                <option value="two-side-drapes">Two independent side drapes only</option>
+                <option value="short-shoulder">Short shoulder-length layer</option>
+                <option value="hidden-under-hair">Mostly hidden beneath the hair</option>
+                <option value="none">No separate back garment panel</option>
+              </select>
+            </label>
+            <label>
+              Garment attachment
+              <select id="outerGarmentAttachment">
+                <option value="auto" selected>Auto / infer</option>
+                <option value="neck">Attached at the neck/collar</option>
+                <option value="shoulders">Attached across the shoulders</option>
+                <option value="upper-arms">Attached at the upper arms</option>
+                <option value="waist">Attached at the waist or hips</option>
+              </select>
+            </label>
+            <label class="check-label">
+              <input id="garmentSymmetryToggle" type="checkbox" checked>
+              Keep cloak/cape construction strictly symmetrical
+            </label>
+          </div>
+          <p class="helper-text">For capes, cloaks, mantles, detached sleeve drapes, robe trains, or similar layered garments, set the structure here. The renderer also sends upper and lower detail crops so shoulder attachments, drape shapes, and hems are easier to preserve.</p>
+        </details>
+
+        <div class="action-row">
+          <p id="referenceMessage" class="inline-message" aria-live="polite"></p>
+          <button class="primary-button" id="generateArtButton" type="button">Generate 3/4 art pair</button>
+        </div>
+      </section>
+
+      <section class="panel step-panel" data-panel="2" hidden>
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Step 2</p>
+            <h2>Review the directional art</h2>
+            <p>The front and rear views are drawn together on one turnaround sheet, then separated automatically. This shares design decisions between both directions before either image is exported.</p>
+          </div>
+          <button class="ghost-button" id="backToReferenceButton" type="button">Edit instructions</button>
+        </div>
+
+        <div class="generation-progress hidden" id="artProgress" aria-live="polite">
+          <div class="spinner"></div>
+          <div>
+            <strong id="artProgressTitle">Examining the character…</strong>
+            <p id="artProgressText">Generating both three-quarter views together on one wide consistency sheet.</p>
+          </div>
+        </div>
+
+        <div class="result-grid" id="artResults">
+          <article class="result-card">
+            <header>
+              <div>
+                <span class="direction-label">FRONT 3/4</span>
+                <h3>Polished character art</h3>
+              </div>
+              <button class="icon-button" type="button" data-download="art-front" aria-label="Download front art PNG">↓</button>
+            </header>
+            <div class="checkerboard image-stage"><img id="artFrontImage" alt="Generated front three-quarter character art"></div>
+          </article>
+          <article class="result-card">
+            <header>
+              <div>
+                <span class="direction-label">REAR 3/4</span>
+                <h3>Polished character art</h3>
+              </div>
+              <button class="icon-button" type="button" data-download="art-back" aria-label="Download rear art PNG">↓</button>
+            </header>
+            <div class="checkerboard image-stage"><img id="artBackImage" alt="Generated rear three-quarter character art"></div>
+          </article>
+        </div>
+
+        <div class="action-row">
+          <p id="artMessage" class="inline-message" aria-live="polite"></p>
+          <button class="secondary-button" id="retryArtButton" type="button">Regenerate pair</button>
+          <button class="primary-button" id="makeSpriteButton" type="button">Make sprite versions</button>
+        </div>
+      </section>
+
+      <section class="panel step-panel" data-panel="3" hidden>
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Step 3</p>
+            <h2>Convert and refine the sprites</h2>
+            <p>The renderer simplifies the artwork into a readable game asset. The controls below make non-destructive PNG refinements in your browser.</p>
+          </div>
+          <button class="ghost-button" id="backToArtButton" type="button">Back to art</button>
+        </div>
+
+        <div class="sprite-toolbar">
+          <label>
+            Sprite treatment
+            <select id="spriteTreatment">
+              <option value="clean-pixel" selected>Clean pixel sprite</option>
+              <option value="retro-32">Retro 32-bit</option>
+              <option value="cel-cutout">Cel-shaded cutout</option>
+              <option value="painted-cutout">Painted cutout</option>
+            </select>
+          </label>
+          <button class="secondary-button" id="generateSpritesButton" type="button">Generate sprites</button>
+        </div>
+
+        <div class="generation-progress hidden" id="spriteProgress" aria-live="polite">
+          <div class="spinner"></div>
+          <div>
+            <strong>Converting both views…</strong>
+            <p>Preserving the pose and silhouette while simplifying detail for board readability.</p>
+          </div>
+        </div>
+
+        <div class="refinement-layout">
+          <div class="result-grid sprite-results">
+            <article class="result-card">
+              <header>
+                <div>
+                  <span class="direction-label">FRONT 3/4</span>
+                  <h3>Sprite preview</h3>
+                </div>
+                <button class="icon-button" type="button" data-download="sprite-front" aria-label="Download front sprite PNG">↓</button>
+              </header>
+              <div class="checkerboard image-stage sprite-stage"><canvas id="spriteFrontCanvas" width="768" height="1024" aria-label="Front sprite preview"></canvas></div>
+            </article>
+            <article class="result-card">
+              <header>
+                <div>
+                  <span class="direction-label">REAR 3/4</span>
+                  <h3>Sprite preview</h3>
+                </div>
+                <button class="icon-button" type="button" data-download="sprite-back" aria-label="Download rear sprite PNG">↓</button>
+              </header>
+              <div class="checkerboard image-stage sprite-stage"><canvas id="spriteBackCanvas" width="768" height="1024" aria-label="Rear sprite preview"></canvas></div>
+            </article>
+          </div>
+
+          <aside class="refinement-panel">
+            <h3>PNG refinements</h3>
+            <label>
+              Background alpha removal
+              <input id="alphaThreshold" type="range" min="0" max="180" value="28">
+              <span class="range-value"><span id="alphaThresholdValue">28</span></span>
+            </label>
+            <label>
+              Edge softness
+              <input id="edgeSoftness" type="range" min="0" max="80" value="18">
+              <span class="range-value"><span id="edgeSoftnessValue">18</span></span>
+            </label>
+            <label>
+              Overall opacity
+              <input id="overallOpacity" type="range" min="10" max="100" value="100">
+              <span class="range-value"><span id="overallOpacityValue">100</span>%</span>
+            </label>
+            <label>
+              Pixel block size
+              <input id="pixelSize" type="range" min="1" max="8" value="1">
+              <span class="range-value"><span id="pixelSizeValue">1</span>×</span>
+            </label>
+            <label>
+              Canvas padding
+              <input id="canvasPadding" type="range" min="0" max="20" value="6">
+              <span class="range-value"><span id="canvasPaddingValue">6</span>%</span>
+            </label>
+            <label class="check-label">
+              <input id="outlineToggle" type="checkbox" checked>
+              Add a one-pixel dark outline
+            </label>
+            <button class="small-button" id="resetRefinementsButton" type="button">Reset refinements</button>
+          </aside>
+        </div>
+
+        <div class="action-row">
+          <p id="spriteMessage" class="inline-message" aria-live="polite"></p>
+          <button class="primary-button" id="continueExportButton" type="button">Continue to export</button>
+        </div>
+      </section>
+
+      <section class="panel step-panel" data-panel="4" hidden>
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">Step 4</p>
+            <h2>Export the character pack</h2>
+            <p>Download individual transparent PNG files or one Visualiser package containing the images and metadata.</p>
+          </div>
+          <button class="ghost-button" id="backToSpritesButton" type="button">Back to refinements</button>
+        </div>
+
+        <div class="export-summary">
+          <div class="pack-icon"><img src="assets/icon.svg" alt=""></div>
+          <div>
+            <h3 id="exportCharacterName">Untitled character</h3>
+            <p>2 polished art PNGs · 2 sprite PNGs · mirror rules · anchor and alpha settings</p>
+          </div>
+        </div>
+
+        <div class="export-grid">
+          <button class="export-button" id="downloadArtPairButton" type="button">
+            <strong>Download art PNGs</strong>
+            <span>Front and rear polished renders</span>
+          </button>
+          <button class="export-button" id="downloadSpritePairButton" type="button">
+            <strong>Download sprite PNGs</strong>
+            <span>Front and rear refined sprites</span>
+          </button>
+          <button class="export-button featured" id="downloadPackButton" type="button">
+            <strong>Download .smbsprite</strong>
+            <span>Single importable Visualiser character package</span>
+          </button>
+          <button class="export-button" id="downloadManifestButton" type="button">
+            <strong>Download manifest JSON</strong>
+            <span>Metadata without embedded image files</span>
+          </button>
+        </div>
+
+        <div class="package-details">
+          <h3>Package defaults</h3>
+          <div class="form-grid compact">
+            <label>
+              Visualiser scale
+              <input id="visualiserScale" type="number" min="0.1" max="5" step="0.05" value="1">
+            </label>
+            <label>
+              Foot anchor X
+              <input id="anchorX" type="number" min="0" max="1" step="0.01" value="0.5">
+            </label>
+            <label>
+              Foot anchor Y
+              <input id="anchorY" type="number" min="0" max="1" step="0.01" value="0.98">
+            </label>
+          </div>
+        </div>
+
+        <div class="action-row">
+          <p id="exportMessage" class="inline-message" aria-live="polite"></p>
+          <button class="secondary-button" id="startOverButton" type="button">Create another character</button>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <dialog id="settingsPanel">
+    <form method="dialog" class="settings-dialog">
+      <header>
+        <div>
+          <p class="eyebrow">Connection</p>
+          <h2>Renderer settings</h2>
+        </div>
+        <button class="icon-button" value="cancel" aria-label="Close settings">×</button>
+      </header>
+      <label>
+        API base URL
+        <input id="apiBaseInput" type="url" placeholder="Same site: leave blank, or https://your-worker.example.com">
+      </label>
+      <label>
+        Optional app access token
+        <input id="accessTokenInput" type="password" autocomplete="off" placeholder="Only needed if APP_ACCESS_TOKEN is configured">
+      </label>
+      <p class="helper-text">No external API key is required. Image generation runs through the Cloudflare Workers AI <code>AI</code> binding configured in <code>wrangler.toml</code>.</p>
+      <footer>
+        <button class="secondary-button" value="cancel">Cancel</button>
+        <button class="primary-button" id="saveSettingsButton" value="default">Save settings</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <noscript>This application requires JavaScript.</noscript>
+  <script src="app.js" defer></script>
+</body>
+</html>
