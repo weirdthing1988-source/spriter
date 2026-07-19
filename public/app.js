@@ -296,6 +296,76 @@
     }
   }
 
+  async function splitGeneratedPair(dataUrl) {
+    const image = await loadImage(dataUrl);
+    const width = image.naturalWidth || image.width;
+    const height = image.naturalHeight || image.height;
+    if (width < 2 || height < 2) throw new Error('Generated pair image is too small to split.');
+
+    const source = document.createElement('canvas');
+    source.width = width;
+    source.height = height;
+    const sourceContext = source.getContext('2d', { willReadFrequently: true });
+    sourceContext.fillStyle = '#FFFFFF';
+    sourceContext.fillRect(0, 0, width, height);
+    sourceContext.drawImage(image, 0, 0, width, height);
+
+    // FLUX is instructed to leave a white centre gutter. Locate the quietest
+    // vertical band near the middle instead of assuming it obeyed an exact 50/50 split.
+    const pixels = sourceContext.getImageData(0, 0, width, height).data;
+    const start = Math.max(1, Math.floor(width * 0.38));
+    const end = Math.min(width - 2, Math.ceil(width * 0.62));
+    const scores = new Float64Array(width);
+    const yStep = Math.max(1, Math.floor(height / 256));
+    for (let x = start; x <= end; x += 1) {
+      let score = 0;
+      for (let y = 0; y < height; y += yStep) {
+        const index = (y * width + x) * 4;
+        const alpha = pixels[index + 3] / 255;
+        const colourDistance = Math.abs(255 - pixels[index]) + Math.abs(255 - pixels[index + 1]) + Math.abs(255 - pixels[index + 2]);
+        score += colourDistance * alpha;
+      }
+      scores[x] = score;
+    }
+
+    let split = Math.floor(width / 2);
+    let bestScore = Number.POSITIVE_INFINITY;
+    const radius = Math.max(2, Math.round(width * 0.003));
+    for (let x = start + radius; x <= end - radius; x += 1) {
+      let smoothed = 0;
+      for (let offset = -radius; offset <= radius; offset += 1) smoothed += scores[x + offset];
+      // A tiny centre preference avoids selecting a white gap inside flowing hair or a cape.
+      smoothed += Math.abs(x - width / 2) * 0.02;
+      if (smoothed < bestScore) {
+        bestScore = smoothed;
+        split = x;
+      }
+    }
+
+    const halfGutter = Math.max(2, Math.round(width * 0.006));
+    const leftWidth = Math.max(1, split - halfGutter);
+    const rightStart = Math.min(width - 1, split + halfGutter);
+    const rightWidth = Math.max(1, width - rightStart);
+    const panelWidth = Math.max(leftWidth, rightWidth);
+
+    const makePanel = (sx, sw) => {
+      const panel = document.createElement('canvas');
+      panel.width = panelWidth;
+      panel.height = height;
+      const context = panel.getContext('2d');
+      context.fillStyle = '#FFFFFF';
+      context.fillRect(0, 0, panelWidth, height);
+      const dx = Math.round((panelWidth - sw) / 2);
+      context.drawImage(source, sx, 0, sw, height, dx, 0, sw, height);
+      return panel.toDataURL('image/png');
+    };
+
+    return {
+      front: makePanel(0, leftWidth),
+      back: makePanel(rightStart, rightWidth),
+    };
+  }
+
   async function removeConnectedBackground(dataUrl) {
     const image = await loadImage(dataUrl);
     const width = image.naturalWidth || image.width;
@@ -383,8 +453,8 @@
     setMessage(elements.artMessage);
     setStep(2);
     elements.artProgress.classList.remove('hidden');
-    elements.artProgressTitle.textContent = 'Preparing the character reference…';
-    elements.artProgressText.textContent = 'Optimising the reference for FLUX.2 Klein, then generating the front view.';
+    elements.artProgressTitle.textContent = 'Generating one matched turnaround sheet…';
+    elements.artProgressText.textContent = 'FLUX.2 is drawing the front and rear together on one canvas so design decisions are shared.';
     elements.generateArtButton.disabled = true;
     elements.retryArtButton.disabled = true;
     elements.makeSpriteButton.disabled = true;
@@ -400,38 +470,33 @@
       const referenceFront = await resizeImageForAi(sourceFront, 'reference-front.png');
       const referenceBack = sourceBack ? await resizeImageForAi(sourceBack, 'reference-back.png') : null;
 
-      const frontForm = new FormData();
-      addGenerationFields(frontForm);
-      frontForm.append('direction', 'front');
-      frontForm.append('sourceType', state.referenceType);
-      frontForm.append('referenceFront', referenceFront, referenceFront.name);
+      const pairForm = new FormData();
+      addGenerationFields(pairForm);
+      pairForm.append('direction', 'pair');
+      pairForm.append('sourceType', state.referenceType);
+      pairForm.append('referenceFront', referenceFront, referenceFront.name);
+      if (referenceBack) pairForm.append('referenceBack', referenceBack, referenceBack.name);
 
-      const frontPayload = await apiRequest('/api/render', { method: 'POST', body: frontForm });
+      const pairPayload = await apiRequest('/api/render', { method: 'POST', body: pairForm });
       if (ticket !== state.renderTicket) return;
-      state.artFront = await removeConnectedBackground(base64ToDataUrl(frontPayload.image));
+
+      elements.artProgressTitle.textContent = 'Turnaround complete — separating the two views…';
+      elements.artProgressText.textContent = 'The centre gutter is being detected, then each panel is cleaned to transparency.';
+      const pair = await splitGeneratedPair(base64ToDataUrl(pairPayload.image));
+      const [front, back] = await Promise.all([
+        removeConnectedBackground(pair.front),
+        removeConnectedBackground(pair.back),
+      ]);
+      if (ticket !== state.renderTicket) return;
+
+      state.artFront = front;
+      state.artBack = back;
       elements.artFrontImage.src = state.artFront;
-
-      elements.artProgressTitle.textContent = 'Front view complete — matching the rear view…';
-      elements.artProgressText.textContent = 'The approved front output is being used with the original reference to preserve the character design.';
-
-      const generatedFront = await resizeImageForAi(dataUrlToBlob(state.artFront), 'generated-front.png');
-      const backForm = new FormData();
-      addGenerationFields(backForm);
-      backForm.append('direction', 'back');
-      backForm.append('sourceType', state.referenceType);
-      backForm.append('referenceFront', referenceFront, referenceFront.name);
-      if (referenceBack) backForm.append('referenceBack', referenceBack, referenceBack.name);
-      backForm.append('generatedFront', generatedFront, generatedFront.name);
-
-      const backPayload = await apiRequest('/api/render', { method: 'POST', body: backForm });
-      if (ticket !== state.renderTicket) return;
-      state.artBack = await removeConnectedBackground(base64ToDataUrl(backPayload.image));
       elements.artBackImage.src = state.artBack;
-      setMessage(elements.artMessage, 'Directional art pair generated with transparent backgrounds.', 'success');
+      setMessage(elements.artMessage, 'Matched directional art generated from one shared turnaround sheet.', 'success');
       updateStepper();
     } catch (error) {
-      const prefix = state.artFront && !state.artBack ? 'The front view was generated, but the rear view failed. ' : '';
-      setMessage(elements.artMessage, `${prefix}${friendlyError(error)}`, 'error');
+      setMessage(elements.artMessage, friendlyError(error), 'error');
     } finally {
       if (ticket === state.renderTicket) {
         elements.artProgress.classList.add('hidden');
@@ -456,26 +521,21 @@
     try {
       const artFront = await resizeImageForAi(dataUrlToBlob(state.artFront), 'art-front.png');
       const artBack = await resizeImageForAi(dataUrlToBlob(state.artBack), 'art-back.png');
-      const makeForm = (direction) => {
-        const form = new FormData();
-        form.append('direction', direction);
-        form.append('name', elements.characterName.value.trim() || 'Untitled character');
-        form.append('description', elements.descriptionInput.value.trim());
-        form.append('treatment', elements.spriteTreatment.value);
-        form.append('quality', elements.qualitySelect.value);
-        form.append('artFront', artFront, artFront.name);
-        if (direction === 'back') form.append('artBack', artBack, artBack.name);
-        return form;
-      };
+      const form = new FormData();
+      form.append('direction', 'pair');
+      form.append('name', elements.characterName.value.trim() || 'Untitled character');
+      form.append('description', elements.descriptionInput.value.trim());
+      form.append('treatment', elements.spriteTreatment.value);
+      form.append('quality', elements.qualitySelect.value);
+      form.append('artFront', artFront, artFront.name);
+      form.append('artBack', artBack, artBack.name);
 
-      const [frontPayload, backPayload] = await Promise.all([
-        apiRequest('/api/sprite', { method: 'POST', body: makeForm('front') }),
-        apiRequest('/api/sprite', { method: 'POST', body: makeForm('back') }),
-      ]);
-      state.spriteFrontRaw = base64ToDataUrl(frontPayload.image);
-      state.spriteBackRaw = base64ToDataUrl(backPayload.image);
+      const payload = await apiRequest('/api/sprite', { method: 'POST', body: form });
+      const pair = await splitGeneratedPair(base64ToDataUrl(payload.image));
+      state.spriteFrontRaw = pair.front;
+      state.spriteBackRaw = pair.back;
       await renderSpriteCanvases();
-      setMessage(elements.spriteMessage, 'Sprite pair generated. Refine the alpha and scale before exporting.', 'success');
+      setMessage(elements.spriteMessage, 'Matched sprite pair generated from one shared sprite sheet. Refine the alpha and scale before exporting.', 'success');
       updateStepper();
     } catch (error) {
       setMessage(elements.spriteMessage, friendlyError(error), 'error');
