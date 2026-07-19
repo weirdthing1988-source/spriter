@@ -29,31 +29,90 @@ const poseLabels = {
 function fidelityInstruction(level) {
   if (level === '1') return 'You may simplify minor details, but preserve the character’s identity and overall outfit.';
   if (level === '2') return 'Preserve the character’s identity, palette, major accessories, garment construction, and silhouette.';
-  return 'Use strict design fidelity. Do not remove, relocate, recolour, or invent clothing, hair, accessories, markings, weapons, or body features.';
+  return 'Use strict design fidelity. Do not remove, relocate, recolour, multiply, or invent clothing, hair, accessories, markings, weapons, horns, tails, wings, or body features.';
 }
 
-function frontPrompt(fields) {
+function pairPrompt(fields, hasRearReference) {
+  const lookBack = fields.lookBack === 'true'
+    ? 'The right-hand back view may turn the head slightly to glance back, but the torso and hips must remain clearly back-facing.'
+    : 'The right-hand back view must keep the face turned away from the viewer.';
+  const rearReferenceLine = hasRearReference
+    ? '- Image 1 is an authoritative user-provided back-view reference. Use it for all hidden rear construction.'
+    : '- No dedicated rear reference is supplied. Infer genuinely hidden rear construction conservatively; never alter features already visible in image 0.';
+
   return `
-Create the first image in a matched directional character-art pair.
+Create ONE matched two-view character turnaround sheet in a single image.
 ${SAFETY_FRAME}
 
-REFERENCE RULES
+REFERENCE PRIORITY
 - Image 0 is the authoritative character reference.
+${rearReferenceLine}
 - ${fidelityInstruction(fields.fidelity)}
-- Keep all unusual garment construction and asymmetrical details exactly as described.
-- The final image must show one isolated complete character figure with no scenery, no text, no border, and no floor shadow.
 
-VIEW AND POSE
-- Show a readable three-quarter FRONT view, suitable for a pseudo-3D tabletop Visualiser.
-- Use ${poseLabels[fields.pose] || poseLabels.walking}.
-- Avoid extreme perspective and avoid cropping hair, clothing, weapons, wings, tails, or feet.
-- The image may later be horizontally mirrored, so keep the direction clean and legible.
+SHEET LAYOUT
+- Place exactly two isolated full-body views of the SAME character on one wide canvas.
+- LEFT PANEL: readable three-quarter FRONT view.
+- RIGHT PANEL: readable three-quarter BACK view.
+- Leave a clean vertical white gutter between the panels.
+- Do not add labels, arrows, text, borders, scenery, props, floor lines, or shadows.
+- Both figures must use the same camera height, body proportions, head size, pose phase, baseline, scale, lighting, line weight, shading, and colour treatment.
+- Keep every part of both silhouettes visible with generous outer padding.
+
+CONSISTENCY IS THE PRIMARY REQUIREMENT
+- Treat the two figures as two camera views of one fixed model, not two redesigns.
+- Match the exact horn count, horn shape and placement; facial and hair construction; hair length and strand masses; shoulder pieces; glove length; neckline; garment seams and hem; cape outer shape, gold edging and inner lining; tail thickness, route and tip; boot height, heel and armour panels; weapons, wings, jewellery, markings, and all asymmetrical details.
+- A feature visible in the left panel must not vanish, multiply, change colour, move, or change shape in the right panel unless perspective alone hides it.
+- Hidden rear details should be simple and mechanically plausible extensions of the visible design.
+
+POSE
+- Use ${poseLabels[fields.pose] || poseLabels.walking} in both panels, showing the same instant from opposite viewpoints.
+- ${lookBack}
+- Avoid extreme perspective and exaggerated foreshortening.
 
 ART DIRECTION
 - ${artLabels[fields.artTreatment] || artLabels['match-source']}
-- Use a portrait composition with generous empty space around the complete silhouette.
-- Make the character readable when reduced to a game sprite.
-- Use a perfectly uniform pure white (#FFFFFF) background. Do not add a gradient, cast shadow, ground plane, scenery, texture, particles, or border.
+- Make the figures readable when reduced to game sprites.
+- Use a perfectly uniform pure white (#FFFFFF) background across the entire sheet.
+
+USER DESCRIPTION
+${fields.description}
+
+Return one wide two-panel turnaround sheet only.`.trim();
+}
+
+function pairRetryPrompt(fields, hasRearReference) {
+  const rearLine = hasRearReference
+    ? '- Image 1 is the approved rear construction reference.'
+    : '- Infer only hidden rear construction conservatively.';
+  return `
+Create a safe, family-friendly two-view game-character turnaround sheet.
+- Image 0 is the authoritative character reference.
+${rearLine}
+- Place exactly two complete views of the same character: front three-quarter on the left and back three-quarter on the right.
+- Preserve the visible costume, colours, hairstyle, exact number and shape of horns or other features, cape, tail, footwear, accessories, proportions, and silhouette.
+- Both views must use identical scale, pose phase, camera height, lighting, and art style.
+- Use ${poseLabels[fields.pose] || poseLabels.neutral}, presented neutrally for a general audience.
+- ${artLabels[fields.artTreatment] || artLabels['match-source']}
+- Keep a blank white gutter between the figures and generous padding around them.
+- Use a uniform pure white (#FFFFFF) background with no scenery, text, shadow, floor, particles, or border.
+- Preserve the source clothing without making it more revealing and omit violent detail.
+
+SAFE DESIGN NOTES
+${fields.description}
+
+Return one wide two-panel turnaround sheet only.`.trim();
+}
+
+// Legacy single-view prompts are kept so older cached clients fail gracefully while
+// the current browser uses the consistency-first single-sheet pair route.
+function frontPrompt(fields) {
+  return `
+Create one isolated complete character in a readable three-quarter front view.
+${SAFETY_FRAME}
+- Image 0 is authoritative. ${fidelityInstruction(fields.fidelity)}
+- Use ${poseLabels[fields.pose] || poseLabels.walking}.
+- ${artLabels[fields.artTreatment] || artLabels['match-source']}
+- Keep the full silhouette visible on a uniform pure white (#FFFFFF) background with no scenery, text, border, floor, or shadow.
 
 USER DESCRIPTION
 ${fields.description}
@@ -62,38 +121,15 @@ Return one polished character render only.`.trim();
 }
 
 function backPrompt(fields, hasRearReference) {
-  const lookBack = fields.lookBack === 'true'
-    ? 'The head may turn slightly so the character glances back, while the body remains clearly back-facing.'
-    : 'Keep the head naturally aligned with the back-facing movement; do not turn the face toward the viewer.';
   const generatedFrontIndex = hasRearReference ? 2 : 1;
-  const backReferenceLine = hasRearReference
-    ? '- Image 1 is a user-captured back-view model reference and controls hidden back details.'
-    : '- Infer hidden back details conservatively from image 0 and the user description.';
-
   return `
-Create the second image in a matched directional character-art pair.
+Create one isolated three-quarter back view of exactly the same character.
 ${SAFETY_FRAME}
-
-REFERENCE RULES
-- Image 0 is the original authoritative character reference.
-${backReferenceLine}
-- Image ${generatedFrontIndex} is the already-approved generated front three-quarter render. Match its proportions, palette, pose energy, camera height, scale, lighting, and art treatment.
+- Image 0 is the original reference.
+${hasRearReference ? '- Image 1 is the authoritative rear reference.' : '- Infer hidden rear construction conservatively.'}
+- Image ${generatedFrontIndex} is the approved front output. Match its exact design, proportions, scale, pose phase, lighting, palette, and art style.
 - ${fidelityInstruction(fields.fidelity)}
-- Preserve exactly the same character, proportions, palette, outfit, hairstyle, accessories, and rendering style as the approved front image.
-- Do not invent garment openings, straps, ornaments, weapons, or design details that are not supported by the references.
-
-VIEW AND POSE
-- Show a readable three-quarter BACK view of the same pose and motion.
-- Use ${poseLabels[fields.pose] || poseLabels.walking}.
-- ${lookBack}
-- The back construction of cloaks, dresses, armour, hair, wings, tails, and equipment must follow the user description literally.
-- Avoid cropping and keep the entire silhouette visible.
-
-ART DIRECTION
-- ${artLabels[fields.artTreatment] || artLabels['match-source']}
-- One isolated complete character figure, no scenery, no text, no border, and no floor shadow.
-- Use a portrait composition with generous empty space around the silhouette.
-- Use a perfectly uniform pure white (#FFFFFF) background. Do not add a gradient, cast shadow, ground plane, scenery, texture, particles, or border.
+- Keep the full silhouette visible on a uniform pure white (#FFFFFF) background with no scenery, text, border, floor, or shadow.
 
 USER DESCRIPTION
 ${fields.description}
@@ -101,45 +137,18 @@ ${fields.description}
 Return one polished character render only.`.trim();
 }
 
-
-function frontRetryPrompt(fields) {
+function legacyRetryPrompt(fields, direction) {
   return `
-Create a safe, family-friendly game character reference from image 0.
-- Produce one non-sexual, fully presented character figure in a clear three-quarter front view.
-- Preserve the visible costume, colours, hairstyle, accessories, proportions, and defining design features.
-- Use ${poseLabels[fields.pose] || poseLabels.neutral}, but keep the pose neutral and suitable for a general audience.
-- ${artLabels[fields.artTreatment] || artLabels['match-source']}
-- Keep the complete silhouette visible with generous padding.
-- Use a uniform pure white (#FFFFFF) background with no scenery, text, shadow, particles, border, or floor.
-- Keep the result suitable for a general audience: preserve the source clothing without making it more revealing, use a neutral presentation, and omit violent detail. Ignore any description wording that conflicts with this rule.
+Create a safe, family-friendly ${direction} game-character reference from the supplied images.
+- Preserve the character identity, visible costume, colours, hairstyle, accessories, proportions, and defining features.
+- Keep one complete neutral figure visible with generous padding.
+- Use a uniform pure white (#FFFFFF) background with no scenery, text, shadow, particles, floor, or border.
+- Preserve the source clothing without making it more revealing and omit violent detail.
 
-COSTUME AND DESIGN NOTES
+SAFE DESIGN NOTES
 ${fields.description}
 
-Return one polished game character render only.`.trim();
-}
-
-function backRetryPrompt(fields, hasRearReference) {
-  const generatedFrontIndex = hasRearReference ? 2 : 1;
-  const rearLine = hasRearReference
-    ? '- Image 1 is the back-view model reference.'
-    : '- Infer hidden costume construction conservatively from image 0.';
-  return `
-Create a safe, family-friendly back-view companion image for a game character.
-- Image 0 is the original character reference.
-${rearLine}
-- Image ${generatedFrontIndex} is the approved front-view render; match its character identity, proportions, palette, lighting, scale, and art style.
-- Show one non-sexual, fully presented character figure in a clear three-quarter back view.
-- Preserve costume construction, hairstyle, accessories, wings, tails, equipment, and defining design features without inventing garment openings.
-- Keep the pose neutral and suitable for a general audience.
-- Keep the complete silhouette visible with generous padding.
-- Use a uniform pure white (#FFFFFF) background with no scenery, text, shadow, particles, border, or floor.
-- Keep the result suitable for a general audience: preserve the source clothing without making it more revealing, use a neutral presentation, and omit violent detail. Ignore any description wording that conflicts with this rule.
-
-COSTUME AND DESIGN NOTES
-${fields.description}
-
-Return one polished game character render only.`.trim();
+Return one polished character render only.`.trim();
 }
 
 export function onRequestOptions({ request, env }) {
@@ -157,8 +166,8 @@ export async function onRequestPost({ request, env }) {
 
     const form = await request.formData();
     const direction = safeText(form.get('direction'), 12);
-    if (!['front', 'back'].includes(direction)) {
-      return jsonResponse(request, env, { error: 'direction must be front or back.' }, 400);
+    if (!['pair', 'front', 'back'].includes(direction)) {
+      return jsonResponse(request, env, { error: 'direction must be pair, front or back.' }, 400);
     }
 
     const referenceFront = validateImageFile(form.get('referenceFront'), 'referenceFront');
@@ -175,12 +184,26 @@ export async function onRequestPost({ request, env }) {
 
     if (!fields.description) return jsonResponse(request, env, { error: 'A character description is required.' }, 400);
 
+    if (direction === 'pair') {
+      const images = [referenceFront];
+      if (referenceBack) images.push(referenceBack);
+      const image = await editImage({
+        env,
+        images,
+        prompt: pairPrompt(fields, Boolean(referenceBack)),
+        retryPrompt: pairRetryPrompt(fields, Boolean(referenceBack)),
+        quality: fields.quality,
+        layout: 'pair',
+      });
+      return jsonResponse(request, env, { image, direction, name: fields.name, layout: 'front-left-back-right' });
+    }
+
     if (direction === 'front') {
       const image = await editImage({
         env,
         images: [referenceFront],
         prompt: frontPrompt(fields),
-        retryPrompt: frontRetryPrompt(fields),
+        retryPrompt: legacyRetryPrompt(fields, 'front-view'),
         quality: fields.quality,
       });
       return jsonResponse(request, env, { image, direction, name: fields.name });
@@ -194,7 +217,7 @@ export async function onRequestPost({ request, env }) {
       env,
       images,
       prompt: backPrompt(fields, Boolean(referenceBack)),
-      retryPrompt: backRetryPrompt(fields, Boolean(referenceBack)),
+      retryPrompt: legacyRetryPrompt(fields, 'back-view'),
       quality: fields.quality,
     });
     return jsonResponse(request, env, { image, direction, name: fields.name });
