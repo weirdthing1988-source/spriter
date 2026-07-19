@@ -15,7 +15,7 @@ pages_build_output_dir = "./public"
 binding = "AI"
 ```
 
-No OpenAI API key or Cloudflare API token is required as a project secret for image generation.
+No external image-generation API key or Cloudflare API token is required as a project secret.
 
 ## Recommended Workers Builds settings
 
@@ -32,7 +32,7 @@ This project has no runtime npm dependencies. Wrangler is fetched only for the d
 - `APP_ACCESS_TOKEN`: protects `/api/health`, `/api/render`, and `/api/sprite`
 - `ALLOWED_ORIGIN`: comma-separated permitted web origins
 
-Do not add `OPENAI_API_KEY` or `OPENAI_IMAGE_MODEL`; the project no longer reads them.
+No external model key or model-name variable is required; the Workers AI binding supplies the model access.
 
 ## GitHub workflow note
 
@@ -42,7 +42,7 @@ This project does not use GitHub Pages. Cloudflare deploys it from the connected
 
 1. Upload all files from this ZIP, including `functions/`, `public/`, and `wrangler.toml`.
 2. Delete any old `package-lock.json` from GitHub.
-3. Remove old OpenAI variables or secrets from Cloudflare because they are unused.
+3. Remove any obsolete external image-provider variables or secrets because they are unused.
 4. Clear the Cloudflare build cache.
 5. Redeploy.
 6. If the browser still shows an old renderer name, clear the site data once or unregister the previous service worker.

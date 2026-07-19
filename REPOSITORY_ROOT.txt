@@ -1,0 +1,11 @@
+Upload the CONTENTS of this package directly to the repository root.
+
+The repository top level must show:
+  functions/
+  public/
+  tests/
+  wrangler.toml
+  package.json
+
+Do not place these files inside another wrapper folder.
+Do not add a .github/workflows/pages.yml GitHub Pages workflow.

@@ -1,4 +1,4 @@
-# Visualiser Character Studio — Cloudflare Workers AI edition
+# Visualiser Character Studio v6.3 — Cloudflare Workers AI edition
 
 A GitHub-hosted companion app for creating matched character assets for the SMB D&D Visualiser. Image generation and editing run entirely through the Cloudflare Workers AI binding using:
 
@@ -6,16 +6,16 @@ A GitHub-hosted companion app for creating matched character assets for the SMB 
 @cf/black-forest-labs/flux-2-klein-4b
 ```
 
-No OpenAI account, OpenAI API key, or external image-generation secret is required.
+No external image-generation API key or project secret is required.
 
 ## Character workflow
 
 1. Upload a character image or load a GLB/glTF model.
 2. For a model, capture the desired front and optional rear reference angles.
 3. Add the character description, pose, style, fidelity, and non-negotiable design details.
-4. Generate the polished front three-quarter art.
-5. Generate the matching rear three-quarter art using the original reference, optional rear model capture, and approved front output.
-6. Convert both polished views into matching sprite versions.
+4. Generate one wide consistency sheet containing the front and rear three-quarter art together.
+5. Let the browser detect the centre gutter, split the sheet, and remove the white background from each view.
+6. Convert both approved art views into one matched two-panel sprite sheet and split it automatically.
 7. Refine alpha removal, edge softness, opacity, pixel size, outline, and padding in the browser.
 8. Download four transparent PNG files, a manifest, or one `.smbsprite` package.
 
@@ -25,6 +25,8 @@ FLUX.2 Klein supports up to four image references, with reference inputs below 5
 
 The generated art is requested against a uniform white background. The browser removes only edge-connected background pixels before displaying and exporting the polished art. Sprite background cleanup remains adjustable in Step 3.
 
+The front and rear are now requested in one image rather than in independent generations. This substantially reduces changes to visible features such as horn count, hair mass, cape shape, tail tip, footwear, and proportions. A single front reference still cannot reveal genuinely hidden back construction, so those unseen details remain an informed model inference unless a rear model capture is supplied.
+
 ## What is implemented
 
 - Responsive image/model upload UI
@@ -32,8 +34,9 @@ The generated art is requested against a uniform white background. The browser r
 - Manual front/rear model-view captures
 - Character name, pose, treatment, output size, fidelity, and description controls
 - Cloudflare Workers AI multipart image editing
-- Staged matched front/rear art workflow
-- Parallel front/rear sprite conversion workflow
+- Single-sheet matched front/rear art workflow to reduce cross-view redesign
+- Automatic centre-gutter detection and panel separation
+- Single-sheet matched front/rear sprite conversion workflow
 - Client-side white-padded reference preparation for FLUX.2 input limits
 - One automatic safety-framed retry when Cloudflare returns model error 3030
 - Clear 3030 guidance if both the normal and safer retry are rejected
@@ -129,8 +132,9 @@ This performs JavaScript syntax checks and mocked endpoint tests covering:
 - FLUX.2 model selection
 - multipart serialization
 - contiguous `input_image_0` through `input_image_3` naming
-- front and rear art stages
-- front and rear sprite stages
+- one-reference and two-reference art-pair requests
+- matched two-reference sprite-pair requests
+- landscape pair dimensions and legacy single-view compatibility
 - AI binding health status
 - optional app-token protection
 - automatic recovery from a first simulated Cloudflare 3030 output flag
@@ -151,13 +155,13 @@ The project does not attempt to disable or bypass Cloudflare's safety system.
 
 ## Output sizes
 
-The UI quality choices control generated dimensions:
+The consistency-first workflow generates one landscape sheet and then splits it into two panels:
 
-- Draft: 512×768
-- Standard: 768×1152
-- High: 1024×1536
+- Draft sheet: 1024×768; each view is approximately 512×768
+- Standard sheet: 1536×1024; each view is approximately 768×1024
+- High sheet: 1920×1280; each view is approximately 960×1280
 
-FLUX.2 Klein uses a fixed distilled inference process; these choices change output dimensions rather than model step count.
+The exact panel width can vary slightly because the browser searches for the cleanest white centre gutter before splitting. FLUX.2 Klein uses a fixed distilled inference process; these choices change output dimensions rather than model step count.
 
 ## `.smbsprite` package
 
@@ -175,7 +179,7 @@ The current SMB D&D Visualiser does not yet import this format automatically; it
 
 ## Security and privacy
 
-- No OpenAI key or Cloudflare API token is sent to the browser.
+- No image-generation key or Cloudflare API token is sent to the browser.
 - Workers AI is accessed through the server-side `AI` binding.
 - `APP_ACCESS_TOKEN` is optional and should be enabled for private deployments.
 - Add Cloudflare Turnstile and rate limiting before sharing a public generation endpoint widely.
