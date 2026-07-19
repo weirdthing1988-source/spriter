@@ -1,0 +1,13 @@
+{
+  "name": "visualiser-character-studio",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npx --yes wrangler@4.112.0 pages dev public --port 8788",
+    "deploy": "npx --yes wrangler@4.112.0 pages deploy public",
+    "check": "node --check public/app.js && node --check functions/_shared.js && node --check functions/api/health.js && node --check functions/api/render.js && node --check functions/api/sprite.js",
+    "test": "node tests/mock-functions.mjs",
+    "verify": "npm run check && npm test"
+  }
+}
