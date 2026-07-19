@@ -1,4 +1,4 @@
-const CACHE = 'visualiser-character-studio-v6-3';
+const CACHE = 'visualiser-character-studio-v6-5';
 const SHELL = [
   './',
   './index.html',

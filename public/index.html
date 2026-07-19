@@ -53,7 +53,7 @@
           <div>
             <p class="eyebrow">Step 1</p>
             <h2>Add a character reference</h2>
-            <p>Upload an illustration, rendered model view, or GLB model. The description box is used to explain hidden details and the exact pose you want.</p>
+            <p>Upload an illustration, rendered model view, or GLB model. The description box is used to explain hidden details and the exact pose you want. Advanced controls can now lock cloak, cape, mantle, and draped-garment structure.</p>
           </div>
           <span class="status-pill" id="connectionBadge">Checking renderer…</span>
         </div>
@@ -78,10 +78,10 @@
 
         <div id="modelInputPanel" class="tab-panel" role="tabpanel" aria-labelledby="modelTab" hidden>
           <label class="drop-zone" id="modelDropZone" for="modelInput">
-            <input id="modelInput" type="file" accept=".glb,.gltf,model/gltf-binary,model/gltf+json">
+            <input id="modelInput" type="file" accept=".glb,.gltf,.dae,.zip,model/gltf-binary,model/gltf+json,application/zip">
             <span class="drop-icon">3D</span>
-            <strong>Drop a GLB or glTF model here</strong>
-            <small>GLB is recommended because textures are usually embedded</small>
+            <strong>Drop a GLB, glTF, DAE or ZIP model here</strong>
+            <small>ZIP is recommended for DAE so textures can be unpacked and converted automatically</small>
           </label>
           <div class="model-stage hidden" id="modelStage">
             <model-viewer id="modelViewer" camera-controls interaction-prompt="none" shadow-intensity="1" environment-image="neutral" alt="Uploaded character model"></model-viewer>
@@ -89,7 +89,7 @@
               <button class="small-button" id="captureFrontButton" type="button">Capture current view as front 3/4</button>
               <button class="small-button" id="captureBackButton" type="button">Capture current view as rear 3/4</button>
             </div>
-            <p class="helper-text">Rotate the model to the angle you want, then capture each reference. The renderer will use both images to create polished art.</p>
+            <p class="helper-text">GLB and glTF load directly. ZIP uploads are unpacked in the browser; if a DAE is found it is converted to GLB automatically, even when the texture folders are messy. Then rotate the model and capture each reference.</p>
             <div class="capture-previews">
               <figure>
                 <figcaption>Front reference</figcaption>
@@ -155,7 +155,46 @@
               <input id="lookBackToggle" type="checkbox">
               Rear view glances back toward camera
             </label>
+            <label>
+              Outer garment type
+              <select id="outerGarmentType">
+                <option value="auto" selected>Auto / describe manually</option>
+                <option value="cape">Cape</option>
+                <option value="cloak">Cloak</option>
+                <option value="detached-sleeve-drapes">Detached sleeve drapes</option>
+                <option value="shoulder-mantle">Shoulder mantle</option>
+                <option value="split-coattails">Split coat tails</option>
+                <option value="none">No outer garment</option>
+              </select>
+            </label>
+            <label>
+              Back construction
+              <select id="outerGarmentBack">
+                <option value="auto" selected>Auto / infer from description</option>
+                <option value="full-back-panel">Single full back panel</option>
+                <option value="open-centre">Open at the centre back</option>
+                <option value="two-side-drapes">Two independent side drapes only</option>
+                <option value="short-shoulder">Short shoulder-length layer</option>
+                <option value="hidden-under-hair">Mostly hidden beneath the hair</option>
+                <option value="none">No separate back garment panel</option>
+              </select>
+            </label>
+            <label>
+              Garment attachment
+              <select id="outerGarmentAttachment">
+                <option value="auto" selected>Auto / infer</option>
+                <option value="neck">Attached at the neck/collar</option>
+                <option value="shoulders">Attached across the shoulders</option>
+                <option value="upper-arms">Attached at the upper arms</option>
+                <option value="waist">Attached at the waist or hips</option>
+              </select>
+            </label>
+            <label class="check-label">
+              <input id="garmentSymmetryToggle" type="checkbox" checked>
+              Keep cloak/cape construction strictly symmetrical
+            </label>
           </div>
+          <p class="helper-text">For capes, cloaks, mantles, detached sleeve drapes, robe trains, or similar layered garments, set the structure here. The renderer also sends upper and lower detail crops so shoulder attachments, drape shapes, and hems are easier to preserve.</p>
         </details>
 
         <div class="action-row">

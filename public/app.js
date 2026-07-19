@@ -7,6 +7,8 @@
     imageFile: null,
     modelFile: null,
     modelUrl: null,
+    modelAssetUrls: [],
+    modelImportKind: '',
     modelFrontBlob: null,
     modelBackBlob: null,
     artFront: null,
@@ -50,6 +52,10 @@
     fidelityRange: $('#fidelityRange'),
     fidelityValue: $('#fidelityValue'),
     lookBackToggle: $('#lookBackToggle'),
+    outerGarmentType: $('#outerGarmentType'),
+    outerGarmentBack: $('#outerGarmentBack'),
+    outerGarmentAttachment: $('#outerGarmentAttachment'),
+    garmentSymmetryToggle: $('#garmentSymmetryToggle'),
     generateArtButton: $('#generateArtButton'),
     retryArtButton: $('#retryArtButton'),
     makeSpriteButton: $('#makeSpriteButton'),
@@ -167,6 +173,7 @@
     });
   }
 
+
   function acceptImage(file) {
     if (!/^image\/(png|jpeg|webp)$/i.test(file.type)) {
       setMessage(elements.referenceMessage, 'Use a PNG, JPG or WebP image.', 'error');
@@ -184,26 +191,257 @@
     setMessage(elements.referenceMessage, `${file.name} is ready.`, 'success');
   }
 
-  function acceptModel(file) {
-    if (!/\.(glb|gltf)$/i.test(file.name)) {
-      setMessage(elements.referenceMessage, 'Use a GLB or glTF model. GLB is recommended.', 'error');
-      return;
+  const MODEL_DIRECT_LIMIT = 50 * 1024 * 1024;
+  const MODEL_ARCHIVE_LIMIT = 100 * 1024 * 1024;
+  let modelToolingPromise = null;
+
+  function revokeModelResources() {
+    if (state.modelUrl) {
+      URL.revokeObjectURL(state.modelUrl);
+      state.modelUrl = null;
     }
-    if (file.size > 50 * 1024 * 1024) {
-      setMessage(elements.referenceMessage, 'The model must be 50 MB or smaller.', 'error');
-      return;
+    if (Array.isArray(state.modelAssetUrls)) {
+      state.modelAssetUrls.forEach((url) => {
+        try { URL.revokeObjectURL(url); } catch {}
+      });
     }
-    if (state.modelUrl) URL.revokeObjectURL(state.modelUrl);
-    state.modelFile = file;
-    state.modelUrl = URL.createObjectURL(file);
+    state.modelAssetUrls = [];
+  }
+
+  function resetModelCaptures() {
     state.modelFrontBlob = null;
     state.modelBackBlob = null;
     elements.modelFrontCapture.removeAttribute('src');
     elements.modelBackCapture.removeAttribute('src');
+  }
+
+  function setLoadedModel(file, url, importKind, message) {
+    revokeModelResources();
+    state.modelFile = file;
+    state.modelUrl = url;
+    state.modelImportKind = importKind;
+    resetModelCaptures();
     elements.modelViewer.src = state.modelUrl;
     elements.modelDropZone.classList.add('hidden');
     elements.modelStage.classList.remove('hidden');
-    setMessage(elements.referenceMessage, 'Rotate the model and capture the front and rear reference angles.', 'success');
+    setMessage(elements.referenceMessage, message, 'success');
+  }
+
+  async function loadModelTooling() {
+    if (!modelToolingPromise) {
+      modelToolingPromise = Promise.all([
+        import('https://esm.sh/jszip@3.10.1'),
+        import('https://esm.sh/three@0.179.1'),
+        import('https://esm.sh/three@0.179.1/examples/jsm/loaders/ColladaLoader.js'),
+        import('https://esm.sh/three@0.179.1/examples/jsm/exporters/GLTFExporter.js'),
+      ]).then(([zipModule, threeModule, colladaModule, exporterModule]) => ({
+        JSZip: zipModule.default,
+        LoadingManager: threeModule.LoadingManager,
+        ColladaLoader: colladaModule.ColladaLoader,
+        GLTFExporter: exporterModule.GLTFExporter,
+      }));
+    }
+    return modelToolingPromise;
+  }
+
+  function normalizeAssetPath(value) {
+    let path = String(value || '').trim();
+    try { path = decodeURIComponent(path); } catch {}
+    path = path.replace(/^file:(?:\/\/)?/i, '');
+    path = path.replace(/^[A-Za-z]:[\/]/, '');
+    path = path.replace(/\+/g, '/');
+    path = path.replace(/^\/+/, '');
+    const parts = [];
+    for (const piece of path.split('/')) {
+      const part = piece.trim();
+      if (!part || part === '.') continue;
+      if (part === '..') {
+        if (parts.length) parts.pop();
+        continue;
+      }
+      parts.push(part);
+    }
+    return parts.join('/').toLowerCase();
+  }
+
+  function pathBasename(value) {
+    const normalized = normalizeAssetPath(value);
+    const pieces = normalized.split('/');
+    return pieces[pieces.length - 1] || normalized;
+  }
+
+  function pathDirname(value) {
+    const normalized = normalizeAssetPath(value);
+    const pieces = normalized.split('/');
+    pieces.pop();
+    return pieces.join('/');
+  }
+
+  function createAssetIndex(entries) {
+    const assets = entries.map((entry) => ({
+      ...entry,
+      normalized: normalizeAssetPath(entry.path),
+      basename: pathBasename(entry.path),
+    }));
+    const exact = new Map();
+    const byBase = new Map();
+    assets.forEach((asset) => {
+      exact.set(asset.normalized, asset);
+      if (!byBase.has(asset.basename)) byBase.set(asset.basename, []);
+      byBase.get(asset.basename).push(asset);
+    });
+    return { assets, exact, byBase };
+  }
+
+  function candidateScore(assetPath, requestedPath, daeDir) {
+    const a = assetPath.split('/');
+    const b = requestedPath.split('/');
+    let suffix = 0;
+    while (suffix < a.length && suffix < b.length && a[a.length - 1 - suffix] === b[b.length - 1 - suffix]) suffix += 1;
+    let prefix = 0;
+    const dirParts = daeDir ? daeDir.split('/') : [];
+    while (prefix < a.length && prefix < dirParts.length && a[prefix] === dirParts[prefix]) prefix += 1;
+    return (suffix * 100) + prefix;
+  }
+
+  function matchArchivedAsset(requestedUrl, daeDir, index) {
+    const direct = normalizeAssetPath(requestedUrl);
+    const joined = daeDir ? normalizeAssetPath(`${daeDir}/${direct}`) : direct;
+    const variants = [...new Set([direct, joined].filter(Boolean))];
+    for (const variant of variants) {
+      if (index.exact.has(variant)) return index.exact.get(variant);
+    }
+    const basename = pathBasename(requestedUrl);
+    const list = index.byBase.get(basename) || [];
+    if (!list.length) return null;
+    const requested = joined || direct || basename;
+    return [...list].sort((left, right) => candidateScore(right.normalized, requested, daeDir) - candidateScore(left.normalized, requested, daeDir))[0] || null;
+  }
+
+  async function exportSceneAsGlb(scene, GLTFExporter) {
+    const exporter = new GLTFExporter();
+    const arrayBuffer = await new Promise((resolve, reject) => {
+      exporter.parse(scene, (result) => {
+        if (result instanceof ArrayBuffer) return resolve(result);
+        try {
+          resolve(new TextEncoder().encode(JSON.stringify(result)).buffer);
+        } catch (error) {
+          reject(error);
+        }
+      }, (error) => reject(error), {
+        binary: true,
+        onlyVisible: true,
+        trs: false,
+        maxTextureSize: 2048,
+      });
+    });
+    return new Blob([arrayBuffer], { type: 'model/gltf-binary' });
+  }
+
+  async function loadDirectModel(file) {
+    if (file.size > MODEL_DIRECT_LIMIT) {
+      setMessage(elements.referenceMessage, 'Direct GLB, glTF, or DAE uploads must be 50 MB or smaller.', 'error');
+      return;
+    }
+    if (/\.dae$/i.test(file.name)) {
+      await importStandaloneDae(file);
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    setLoadedModel(file, url, /\.gltf$/i.test(file.name) ? 'gltf' : 'glb', 'Model loaded. Rotate it and capture the front and rear reference angles.');
+  }
+
+  async function importStandaloneDae(file) {
+    setMessage(elements.referenceMessage, 'Converting DAE to GLB in the browser…', 'success');
+    const { LoadingManager, ColladaLoader, GLTFExporter } = await loadModelTooling();
+    const daeText = await file.text();
+    const manager = new LoadingManager();
+    const loader = new ColladaLoader(manager);
+    const collada = loader.parse(daeText, '');
+    const glbBlob = await exportSceneAsGlb(collada.scene, GLTFExporter);
+    const converted = new File([glbBlob], `${file.name.replace(/\.dae$/i, '') || 'converted-model'}.glb`, { type: 'model/gltf-binary' });
+    const url = URL.createObjectURL(converted);
+    setLoadedModel(converted, url, 'dae-converted', 'DAE converted to GLB successfully. Rotate it and capture the front and rear reference angles.');
+  }
+
+  async function importModelArchive(file) {
+    if (file.size > MODEL_ARCHIVE_LIMIT) {
+      setMessage(elements.referenceMessage, 'ZIP model archives must be 100 MB or smaller.', 'error');
+      return;
+    }
+    setMessage(elements.referenceMessage, 'Unpacking ZIP and searching for a DAE model…', 'success');
+    const { JSZip, LoadingManager, ColladaLoader, GLTFExporter } = await loadModelTooling();
+    const zip = await JSZip.loadAsync(file);
+    const entries = Object.values(zip.files).filter((entry) => !entry.dir);
+    const daeEntries = entries.filter((entry) => /\.dae$/i.test(entry.name));
+    if (!daeEntries.length) throw new Error('The ZIP does not contain a .dae model file.');
+    if (daeEntries.length > 1) throw new Error('The ZIP contains multiple .dae files. Please keep one model per ZIP for now.');
+    const daeEntry = daeEntries[0];
+    const daePath = normalizeAssetPath(daeEntry.name);
+    const daeDir = pathDirname(daePath);
+
+    const extracted = [];
+    try {
+      let extractedBytes = 0;
+      for (const entry of entries) {
+        const blob = await entry.async('blob');
+        extractedBytes += blob.size;
+        if (extractedBytes > 250 * 1024 * 1024) throw new Error('The extracted ZIP contents are too large for the in-browser converter.');
+        extracted.push({ path: entry.name, blob, url: URL.createObjectURL(blob) });
+      }
+
+      const daeBlob = extracted.find((entry) => normalizeAssetPath(entry.path) === daePath);
+      if (!daeBlob) throw new Error('The DAE file could not be extracted from the ZIP.');
+      const daeText = await daeBlob.blob.text();
+      const index = createAssetIndex(extracted.filter((entry) => normalizeAssetPath(entry.path) !== daePath));
+      const manager = new LoadingManager();
+      manager.setURLModifier((url) => {
+        const asset = matchArchivedAsset(url, daeDir, index);
+        return asset?.url || url;
+      });
+
+      const loader = new ColladaLoader(manager);
+      const collada = loader.parse(daeText, daeDir ? `${daeDir}/` : '');
+      const glbBlob = await exportSceneAsGlb(collada.scene, GLTFExporter);
+      const converted = new File([glbBlob], `${file.name.replace(/\.zip$/i, '') || 'converted-model'}.glb`, { type: 'model/gltf-binary' });
+      const url = URL.createObjectURL(converted);
+      revokeModelResources();
+      state.modelAssetUrls = extracted.map((entry) => entry.url);
+      state.modelFile = converted;
+      state.modelUrl = url;
+      state.modelImportKind = 'zip-collada';
+      resetModelCaptures();
+      elements.modelViewer.src = state.modelUrl;
+      elements.modelDropZone.classList.add('hidden');
+      elements.modelStage.classList.remove('hidden');
+      setMessage(elements.referenceMessage, `ZIP unpacked and DAE converted to GLB. Found ${index.assets.length} supporting asset${index.assets.length === 1 ? '' : 's'}. Rotate the model and capture the front and rear reference angles.`, 'success');
+    } catch (error) {
+      extracted.forEach((entry) => {
+        try { URL.revokeObjectURL(entry.url); } catch {}
+      });
+      throw error;
+    }
+  }
+
+  async function acceptModel(file) {
+    if (!/\.(glb|gltf|dae|zip)$/i.test(file.name)) {
+      setMessage(elements.referenceMessage, 'Use a GLB, glTF, DAE, or ZIP model package.', 'error');
+      return;
+    }
+
+    try {
+      if (/\.zip$/i.test(file.name)) {
+        await importModelArchive(file);
+        return;
+      }
+      await loadDirectModel(file);
+    } catch (error) {
+      revokeModelResources();
+      state.modelFile = null;
+      state.modelImportKind = '';
+      resetModelCaptures();
+      setMessage(elements.referenceMessage, `Model import failed: ${error.message}`, 'error');
+    }
   }
 
   async function captureModel(kind) {
@@ -242,6 +480,10 @@
     form.append('quality', elements.qualitySelect.value);
     form.append('fidelity', elements.fidelityRange.value);
     form.append('lookBack', String(elements.lookBackToggle.checked));
+    form.append('outerGarmentType', elements.outerGarmentType.value);
+    form.append('outerGarmentBack', elements.outerGarmentBack.value);
+    form.append('outerGarmentAttachment', elements.outerGarmentAttachment.value);
+    form.append('garmentSymmetry', String(elements.garmentSymmetryToggle.checked));
   }
 
   async function apiRequest(path, options = {}) {
@@ -289,6 +531,55 @@
       const x = Math.round((maximumSide - width) / 2);
       const y = Math.round((maximumSide - height) / 2);
       context.drawImage(image, x, y, width, height);
+      const resized = await canvasToBlob(canvas);
+      return new File([resized], filename, { type: 'image/png' });
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
+  }
+
+
+  async function cropImageForAi(blob, filename, mode) {
+    const objectUrl = URL.createObjectURL(blob);
+    try {
+      const image = await loadImage(objectUrl);
+      const sourceWidth = image.naturalWidth || image.width;
+      const sourceHeight = image.naturalHeight || image.height;
+      let crop = null;
+      if (mode === 'upper') {
+        const cropWidth = Math.round(sourceWidth * 0.72);
+        const cropHeight = Math.round(sourceHeight * 0.5);
+        crop = {
+          sx: Math.max(0, Math.round((sourceWidth - cropWidth) / 2)),
+          sy: 0,
+          sw: Math.max(1, cropWidth),
+          sh: Math.max(1, cropHeight),
+        };
+      } else {
+        const cropWidth = Math.round(sourceWidth * 0.86);
+        const cropHeight = Math.round(sourceHeight * 0.58);
+        crop = {
+          sx: Math.max(0, Math.round((sourceWidth - cropWidth) / 2)),
+          sy: Math.max(0, Math.round(sourceHeight * 0.38)),
+          sw: Math.max(1, cropWidth),
+          sh: Math.max(1, Math.min(cropHeight, sourceHeight - Math.round(sourceHeight * 0.38))),
+        };
+      }
+      const maximumSide = 510;
+      const scale = Math.min(1, maximumSide / Math.max(crop.sw, crop.sh));
+      const width = Math.max(1, Math.round(crop.sw * scale));
+      const height = Math.max(1, Math.round(crop.sh * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = maximumSide;
+      canvas.height = maximumSide;
+      const context = canvas.getContext('2d');
+      context.imageSmoothingEnabled = true;
+      context.imageSmoothingQuality = 'high';
+      context.fillStyle = '#FFFFFF';
+      context.fillRect(0, 0, maximumSide, maximumSide);
+      const x = Math.round((maximumSide - width) / 2);
+      const y = Math.round((maximumSide - height) / 2);
+      context.drawImage(image, crop.sx, crop.sy, crop.sw, crop.sh, x, y, width, height);
       const resized = await canvasToBlob(canvas);
       return new File([resized], filename, { type: 'image/png' });
     } finally {
@@ -454,7 +745,7 @@
     setStep(2);
     elements.artProgress.classList.remove('hidden');
     elements.artProgressTitle.textContent = 'Generating one matched turnaround sheet…';
-    elements.artProgressText.textContent = 'FLUX.2 is drawing the front and rear together on one canvas so design decisions are shared.';
+    elements.artProgressText.textContent = 'FLUX.2 is drawing the front and rear together on one canvas so design decisions are shared. Upper and lower detail crops are also provided to stabilise capes, cloaks, sleeves, and layered hems.';
     elements.generateArtButton.disabled = true;
     elements.retryArtButton.disabled = true;
     elements.makeSpriteButton.disabled = true;
@@ -467,8 +758,12 @@
     try {
       const sourceFront = state.referenceType === 'image' ? state.imageFile : state.modelFrontBlob;
       const sourceBack = state.referenceType === 'model' ? state.modelBackBlob : null;
-      const referenceFront = await resizeImageForAi(sourceFront, 'reference-front.png');
-      const referenceBack = sourceBack ? await resizeImageForAi(sourceBack, 'reference-back.png') : null;
+      const [referenceFront, referenceFrontUpper, referenceFrontLower, referenceBack] = await Promise.all([
+        resizeImageForAi(sourceFront, 'reference-front.png'),
+        cropImageForAi(sourceFront, 'reference-front-upper-detail.png', 'upper'),
+        cropImageForAi(sourceFront, 'reference-front-lower-detail.png', 'lower'),
+        sourceBack ? resizeImageForAi(sourceBack, 'reference-back.png') : Promise.resolve(null),
+      ]);
 
       const pairForm = new FormData();
       addGenerationFields(pairForm);
@@ -476,6 +771,8 @@
       pairForm.append('sourceType', state.referenceType);
       pairForm.append('referenceFront', referenceFront, referenceFront.name);
       if (referenceBack) pairForm.append('referenceBack', referenceBack, referenceBack.name);
+      pairForm.append('referenceFrontUpper', referenceFrontUpper, referenceFrontUpper.name);
+      pairForm.append('referenceFrontLower', referenceFrontLower, referenceFrontLower.name);
 
       const pairPayload = await apiRequest('/api/render', { method: 'POST', body: pairForm });
       if (ticket !== state.renderTicket) return;
@@ -829,10 +1126,12 @@
   }
 
   function resetProject() {
+    revokeModelResources();
     state.imageFile = null;
     state.modelFile = null;
     state.modelFrontBlob = null;
     state.modelBackBlob = null;
+    state.modelImportKind = '';
     state.artFront = null;
     state.artBack = null;
     state.spriteFrontRaw = null;
@@ -844,6 +1143,9 @@
     elements.imageDropZone.classList.remove('hidden');
     elements.modelStage.classList.add('hidden');
     elements.modelDropZone.classList.remove('hidden');
+    elements.modelViewer.removeAttribute('src');
+    elements.modelFrontCapture.removeAttribute('src');
+    elements.modelBackCapture.removeAttribute('src');
     elements.characterName.value = '';
     elements.descriptionInput.value = '';
     elements.descriptionCount.textContent = '0';
