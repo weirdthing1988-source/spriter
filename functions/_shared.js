@@ -72,7 +72,12 @@ export function imageModel() {
   return WORKERS_AI_MODEL;
 }
 
-function renderDimensions(quality) {
+function renderDimensions(quality, layout = 'portrait') {
+  if (layout === 'pair') {
+    if (quality === 'low') return { width: 1024, height: 768 };
+    if (quality === 'high') return { width: 1920, height: 1280 };
+    return { width: 1536, height: 1024 };
+  }
   if (quality === 'low') return { width: 512, height: 768 };
   if (quality === 'high') return { width: 1024, height: 1536 };
   return { width: 768, height: 1152 };
@@ -114,12 +119,12 @@ function makeImageForm({ images, prompt, width, height }) {
   return form;
 }
 
-export async function editImage({ env, images, prompt, retryPrompt = '', quality = 'medium' }) {
+export async function editImage({ env, images, prompt, retryPrompt = '', quality = 'medium', layout = 'portrait' }) {
   requireAiBinding(env);
   if (!Array.isArray(images) || images.length < 1) throw new HttpError(400, 'At least one AI reference image is required.');
   if (images.length > 4) throw new HttpError(400, 'FLUX.2 Klein supports no more than four reference images.');
 
-  const { width, height } = renderDimensions(quality);
+  const { width, height } = renderDimensions(quality, layout);
   let payload;
   try {
     payload = await runImageModel(env, makeImageForm({ images, prompt, width, height }));
